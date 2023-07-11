@@ -43,29 +43,36 @@
 			forward: 0,
 			turn: 0
 		}
+		function moveToTarget(targetPositon){
+				// 人物当前位置
+				let originPositon = new THREE.Vector3(peopleObj.position.x, 0, peopleObj.position.z);
+				
+				clickEffectObj.effect(targetPositon.x, 0, targetPositon.z);
+				// 移动距离
+				let distance = originPositon.distanceTo(targetPositon);
 
-		function init() {
+				peopleObj.lookAt(targetPositon.x, 0, targetPositon.z);
 
-			function createJoyStick() {
-				joystick = new JoyStick({
-					onMove: function (forward, turn) {
-						turn = -turn
-						if (Math.abs(forward) < 0.3) forward = 0
-						if (Math.abs(turn) < 0.1) turn = 0
-						move.forward = forward
-						move.turn = turn
-						if (activeAction.getClip() != peopleAnimations[1]) {
-							activeAction.fadeOut(0.2);
-							activeAction = mixer.clipAction(peopleAnimations[1]);
-							activeAction
-								.reset()
-								.setEffectiveTimeScale(1)
-								.setEffectiveWeight(2)
-								.fadeIn(0.2)
-								.play();
-						}
-					},
-					onEnd: function (forward, turn) {
+				// 在传入的时间间隔内，逐渐将此动作的权重（weight）由1降至0
+				// 判断当前人物是否空闲状态，如果空前则改成步行状态
+				if (activeAction.getClip() != peopleAnimations[1]) {
+					activeAction.fadeOut(0.2);
+					activeAction = mixer.clipAction(peopleAnimations[1]);
+					activeAction
+						.reset()
+						.setEffectiveTimeScale(1)
+						.setEffectiveWeight(2)
+						.fadeIn(0.2)
+						.play();
+				}
+
+				if (tween) {
+					TWEEN.remove(tween);
+				}
+				tween = new TWEEN.Tween(originPositon)
+					.to(targetPositon, distance * 800)
+					.easing(TWEEN.Easing.Linear.None)
+					.onComplete(function () {
 						activeAction.fadeOut(0.2);
 						activeAction = mixer.clipAction(peopleAnimations[0]);
 						activeAction
@@ -74,7 +81,48 @@
 							.setEffectiveWeight(2)
 							.fadeIn(0.2)
 							.play();
+					})
+					.onUpdate(function () {
+						peopleObj.position.set(this.x, 0.04, this.z);
 
+						let pos = peopleObj.position.clone();
+						pos.y = 1;
+						controls.target = pos;
+						controls.update();
+					})
+					.start();
+			}
+		function init() {
+
+			function createJoyStick() {
+				joystick = new JoyStick({
+					onMove: function (forward, turn) {
+						console.log(forward , turn)
+						let originPositon = new THREE.Vector3(peopleObj.position.x, 0, peopleObj.position.z);
+
+						moveToTarget(new THREE.Vector3(
+							peopleObj.position.x+(-turn * 20), 0, peopleObj.position.z+(forward * 20)
+						)) 
+						// turn = -turn
+						// if (Math.abs(forward) < 0.3) forward = 0
+						// if (Math.abs(turn) < 0.1) turn = 0
+						// move.forward = forward
+						// move.turn = turn
+						// if (activeAction.getClip() != peopleAnimations[1]) {
+						// 	activeAction.fadeOut(0.2);
+						// 	activeAction = mixer.clipAction(peopleAnimations[1]);
+						// 	activeAction
+						// 		.reset()
+						// 		.setEffectiveTimeScale(1)
+						// 		.setEffectiveWeight(2)
+						// 		.fadeIn(0.2)
+						// 		.play();
+						// }
+					},
+					onEnd: function (forward, turn) {
+						if (tween) {
+					TWEEN.remove(tween);
+				}
 					}
 				})
 				console.log(joystick)
@@ -87,7 +135,7 @@
 			// 创建一个摄像机，它定义了我们正在看的地方
 			camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 10000);
 
-			var controls = new THREE.OrbitControls(camera);
+			controls = new THREE.OrbitControls(camera);
 			// 是否可以缩放
 			controls.enableZoom = false;
 			// 启用或禁用摄像机平移
@@ -179,59 +227,12 @@
 				console.log(intersects)
 
 				if (!intersects) return;
-
-				// 人物当前位置
-				let originPositon = new THREE.Vector3(peopleObj.position.x, 0, peopleObj.position.z);
 				// 任务目标位置
 				let targetPositon = new THREE.Vector3(intersects.x, 0, intersects.z);
-				clickEffectObj.effect(intersects.x, 0, intersects.z);
-				// 移动距离
-				let distance = originPositon.distanceTo(targetPositon);
-
-				peopleObj.lookAt(intersects.x, 0, intersects.z);
-
-				// 在传入的时间间隔内，逐渐将此动作的权重（weight）由1降至0
-				// 判断当前人物是否空闲状态，如果空前则改成步行状态
-				if (activeAction.getClip() != peopleAnimations[1]) {
-					activeAction.fadeOut(0.2);
-					activeAction = mixer.clipAction(peopleAnimations[1]);
-					activeAction
-						.reset()
-						.setEffectiveTimeScale(1)
-						.setEffectiveWeight(2)
-						.fadeIn(0.2)
-						.play();
-				}
-
-				if (tween) {
-					TWEEN.remove(tween);
-				}
-				tween = new TWEEN.Tween(originPositon)
-					.to(targetPositon, distance * 800)
-					.easing(TWEEN.Easing.Linear.None)
-					.onComplete(function () {
-						activeAction.fadeOut(0.2);
-						activeAction = mixer.clipAction(peopleAnimations[0]);
-						activeAction
-							.reset()
-							.setEffectiveTimeScale(1)
-							.setEffectiveWeight(2)
-							.fadeIn(0.2)
-							.play();
-					})
-					.onUpdate(function () {
-						peopleObj.position.set(this.x, 0.04, this.z);
-
-						let pos = peopleObj.position.clone();
-						pos.y = 1;
-						controls.target = pos;
-						controls.update();
-					})
-					.start();
-
+				moveToTarget(targetPositon)
 			}
 			document.addEventListener('click', pickupObjects, false); //监听单击拾取对象初始化球体
-
+			
 			// 创建文字精灵
 			var getTextCanvas = function (text) {
 				let option = {
@@ -313,7 +314,7 @@
 				// console.log('player.position值', player.position)
 				const pos = peopleObj.position.clone()
 				pos.y += 0.5
-				// console.log(pos)
+				// console.log(pos) 
 				// camera.lookAt：相机焦点方向，即相机看向哪一个坐标，默认为Z轴负半轴方向。
 				// 最新版threejs中，lookat的参数直接给数值，不能使用元组形式。正确使用：camera.lookat(0,0,0),   camera.lookAt(-5, 2, 7)
 				camera.lookAt(pos)
@@ -322,7 +323,7 @@
 			function renderScene() {
 				let dt = clock.getDelta()
 				updatePlayer(dt)
-				updateCamera(dt)
+				//updateCamera(dt)
 				for (let i = 0; i < mixerArr.length; i++) {
 					mixerArr[i].update(dt);
 				}
