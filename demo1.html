@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html>
+  <head>
+  <title>Threejs实现鼠标点击人物行走/镜头跟随人物移动/鼠标点击动画/游戏第三人称/行走动作</title>
+  <script type="text/javascript" src="libs/steak.js"></script>
+  <script type="text/javascript" src="libs/three.js"></script>
+  <script type="text/javascript" src="libs/OrbitControlsUpd.js"></script>
+  <script type="text/javascript" src="libs/ColladaLoader.js"></script>
+  <script type="text/javascript" src="libs/dat.gui.js"></script>
+  <script type="text/javascript" src="libs/Tween.min.js"></script>
+  <script type="text/javascript" src="libs/GLTFLoader.js"></script>
+  <script src="libs/js/RGBELoader.js"></script>
+  <meta charset="utf-8">
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <div id="dom"></div>
+  <script type="text/javascript">
+    let camera, scene, renderer, stats, gui;
+
+    let grid;
+    let controls;
+    let clock = new THREE.Clock()
+    let modelList = [];
+    let obj, box3d, boxHelper, stoneBox;
+    let peopleObj, activeAction, peopleAnimations, tween, mixer, peopleBox;
+    let mixerArr = [];
+    let clickEffectObj;
+
+    function init() {
+      // 创建一个场景，它将包含我们所有的元素，如物体，相机和灯光。
+      var scene = new THREE.Scene();
+      scene.opacity = 0;
+
+      // 创建一个摄像机，它定义了我们正在看的地方
+      camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 10000);
+
+      var controls = new THREE.OrbitControls(camera);
+      // 是否可以缩放
+      controls.enableZoom = false;
+      // 启用或禁用摄像机平移
+      controls.enablePan = false
+
+      controls.minPolarAngle = Math.PI / 3;
+      controls.maxPolarAngle = Math.PI / 2.05;
+
+      controls.target = new THREE.Vector3(0, 1, 0);
+      controls.object.position.set(0, 2, -4)
+      controls.update(true); // 初始化
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color("#000000");
+      scene.environment = new THREE.RGBELoader().load('assets/textures/equirectangular/venice_sunset_1k.hdr');
+      scene.environment.mapping = THREE.EquirectangularReflectionMapping;
+      scene.fog = new THREE.Fog(0x333333, 10, 15);
+
+      grid = new THREE.GridHelper(200, 400, 0xffffff, 0xffffff);
+      grid.material.opacity = 0.2;
+      grid.material.depthWrite = false;
+      grid.material.transparent = true;
+      scene.add(grid);
+
+      // 在屏幕上显示坐标轴
+      var axes = new THREE.AxisHelper(10);
+      // scene.add(axes);
+
+      scene.add(new THREE.AmbientLight(0xe0ffff, 1))
+
+
+      // 创建一个渲染器并设置大小，WebGLRenderer将会使用电脑显卡来渲染场景
+      renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        logarithmicDepthBuffer: true,
+      });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      // 将呈现器的输出添加到HTML元素
+      document.getElementById("dom").appendChild(renderer.domElement);
+
+
+      let gloader = new THREE.GLTFLoader()
+      gloader.load("assets/models/man/people.glb", result => {
+        peopleObj = result.scene;
+        peopleObj.scale.set(0.7, 0.7, 0.7);
+        peopleAnimations = result.animations;
+        console.log('result',result)
+
+        // 主人物名字
+        let spriteText = getTextCanvas("仓库人员");
+        spriteText.position.set(0, 1.95, 0);
+        peopleObj.add(spriteText);
+
+        // 组合对象添加到场景中
+        scene.add(peopleObj);
+        // 动画的使用
+     // https://www.three3d.cn/docs/index.html#manual/zh/introduction/Animation-system
+        mixer = new THREE.AnimationMixer(peopleObj);
+        mixerArr.push(mixer)
+        activeAction = mixer.clipAction(peopleAnimations[0]);
+        activeAction.play();
+      })
+
+      // 启动动画
+      renderScene();
+
+      clickEffectObj = new clickEffect();
+
+      // 拾取对象
+      function pickupObjects(event) {
+        // 点击屏幕创建一个向量
+        var raycaster = new THREE.Raycaster();
+        var vector = new THREE.Vector2((event.clientX / window.innerWidth) * 2 - 1, -(event.clientY / window
+          .innerHeight) * 2 + 1);
+        var fxl = new THREE.Vector3(0, 1, 0);
+        var groundplane = new THREE.Plane(fxl, 0);
+        raycaster.setFromCamera(vector, camera);
+        let intersects = raycaster.ray.intersectPlane(groundplane, fxl);
+        console.log(intersects)
+
+        if (!intersects) return;
+
+        // 人物当前位置
+        let originPositon = new THREE.Vector3(peopleObj.position.x, 0, peopleObj.position.z);
+        // 任务目标位置
+        let targetPositon = new THREE.Vector3(intersects.x, 0, intersects.z);
+        clickEffectObj.effect(intersects.x, 0, intersects.z);
+        // 移动距离
+        let distance = originPositon.distanceTo(targetPositon);
+
+        peopleObj.lookAt(intersects.x, 0, intersects.z);
+
+        // 在传入的时间间隔内，逐渐将此动作的权重（weight）由1降至0
+        // 判断当前人物是否空闲状态，如果空前则改成步行状态
+        if (activeAction.getClip() != peopleAnimations[1]) {
+          activeAction.fadeOut(0.2);
+          activeAction = mixer.clipAction(peopleAnimations[1]);
+          activeAction
+            .reset()
+            .setEffectiveTimeScale(1)
+            .setEffectiveWeight(2)
+            .fadeIn(0.2)
+            .play();
+        }
+
+        if (tween) {
+          TWEEN.remove(tween);
+        }
+        tween = new TWEEN.Tween(originPositon)
+          .to(targetPositon, distance * 800)
+          .easing(TWEEN.Easing.Linear.None)
+          .onComplete(function() {
+            activeAction.fadeOut(0.2);
+            activeAction = mixer.clipAction(peopleAnimations[0]);
+            activeAction
+              .reset()
+              .setEffectiveTimeScale(1)
+              .setEffectiveWeight(2)
+              .fadeIn(0.2)
+              .play();
+          })
+          .onUpdate(function() {
+            peopleObj.position.set(this.x, 0.04, this.z);
+
+            let pos = peopleObj.position.clone();
+            pos.y = 1;
+            controls.target = pos;
+            controls.update();
+          })
+          .start();
+
+      }
+      document.addEventListener('click', pickupObjects, false); //监听单击拾取对象初始化球体
+
+      // 创建文字精灵
+      var getTextCanvas = function(text) {
+        let option = {
+            fontFamily: 'Arial',
+            fontSize: 30,
+            fontWeight: 'bold',
+            color: '#ffffff',
+            actualFontSize: 0.08,
+          },
+          canvas, context, textWidth, texture, materialObj, spriteObj;
+        canvas = document.createElement('canvas');
+        context = canvas.getContext('2d');
+        // 先设置字体大小后获取文本宽度
+        context.font = option.fontWeight + ' ' + option.fontSize + 'px ' + option.fontFamily;
+        textWidth = context.measureText(text).width;
+
+        canvas.width = textWidth;
+        canvas.height = option.fontSize;
+
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.fillStyle = option.color;
+        context.font = option.fontWeight + ' ' + option.fontSize + 'px ' + option.fontFamily;
+        context.fillText(text, textWidth / 2, option.fontSize / 1.8);
+
+        texture = new THREE.CanvasTexture(canvas);
+        materialObj = new THREE.SpriteMaterial({
+          map: texture
+        });
+        spriteObj = new THREE.Sprite(materialObj);
+        spriteObj.scale.set(textWidth / option.fontSize * option.actualFontSize, option.actualFontSize, option
+          .actualFontSize);
+
+        return spriteObj;
+      }
+
+      function renderScene() {
+        let dt = clock.getDelta()
+
+        for (let i = 0; i < mixerArr.length; i++) {
+          mixerArr[i].update(dt);
+        }
+
+        TWEEN.update();
+
+        // 使用requestAnimationFrame函数进行渲染
+        requestAnimationFrame(renderScene);
+        renderer.render(scene, camera);
+      }
+
+      // 鼠标点击位置出现动画效果
+      function clickEffect() {
+        var textures = [];
+        var index = 0;
+        var clickEffectMesh;
+
+        var loader = new THREE.ImageLoader();
+        loader.load("assets/textures/spotd.png", function(image) {
+          let canvas, context, geometry, material, plane;
+          let w = image.width;
+          let num = image.height / image.width;
+
+          for (let i = 0; i < num; i++) {
+            textures[i] = new THREE.Texture();
+          }
+
+          for (let i = 0; i < num; i++) {
+            canvas = document.createElement('canvas');
+            context = canvas.getContext('2d');
+            canvas.height = w;
+            canvas.width = w;
+            context.drawImage(image, 0, w * i, w, w, 0, 0, w, w);
+            textures[i].image = canvas;
+            textures[i].needsUpdate = true;
+          }
+
+          geometry = new THREE.PlaneGeometry(1, 1);
+          material = new THREE.MeshBasicMaterial({
+            map: textures[0],
+            transparent: true,
+            side: THREE.DoubleSide,
+          });
+
+          clickEffectMesh = new THREE.Mesh(geometry, material);
+          clickEffectMesh.rotateX(Math.PI / 2);
+          clickEffectMesh.visible = false;
+
+          scene.add(clickEffectMesh);
+        });
+
+        this.effect = function(x, y, z) {
+          clickEffectMesh.visible = true;
+          clickEffectMesh.position.set(x, y, z);
+          let id = setInterval(function() {
+            if (index == 10) {
+              index = 0;
+              clickEffectMesh.visible = false;
+              clearInterval(id);
+            }
+            clickEffectMesh.material.map = textures[index];
+            index++;
+          }, 20)
+        }
+      }
+
+      // 渲染的场景
+      renderer.render(scene, camera);
+    }
+    window.onload = init;
+
+    // 随着窗体的变化修改场景
+    function onResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    // 监听窗体调整大小事件
+    window.addEventListener('resize', onResize, false);
+  </script>
+
+
+</body></html>
